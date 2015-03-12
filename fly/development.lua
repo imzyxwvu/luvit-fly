@@ -1,16 +1,17 @@
 local http = require "http"
 local querystring = require "./querystring"
+local json_encode = (require "./ljson").encode
 
 local fly_ticket = {}
 
-function fly_ticket:render(view_name)
+function fly_ticket:render(view_name, content_type)
 	assert(self.app.engines.view,
 		"you have to import a view engine before rendering any page")
 	error "not yet implemented"
 end
 
 function fly_ticket:render_json(data)
-	error "not yet implemented"
+	return self:display("application/json", json_encode(data))
 end
 
 function fly_ticket:upgrade(protocol)
@@ -23,7 +24,7 @@ function fly_ticket:accept(...)
 	error "not yet implemented"
 end
 
-function fly_ticket:display(str, content_type)
+function fly_ticket:display(content_type, str)
 	assert(type(str) == "string")
 	self.res:writeHead(self.status or 200, {
 		["Content-Type"] = content_type,
@@ -75,22 +76,19 @@ function fly_app:handle(req, res)
 		data.status = 404
 		handler, args = self.error[404], { resource }
 	end
-	local s, err = pcall(handler,ticket, unpack(args))
-	if not ticket.rendered then
-		if s then
-			res:writeHead(404, { ["Content-Type"] = "text/html" })
-			res:finish("<html><body><h1>Request not caught by any handler</h1></body></html>")
-		else
-			res:writeHead(500, { ["Content-Type"] = "text/html" })
-			res:finish(("<html><body><h1>Internal Server Error</h1><p>%s</p></body></html>"):
-				format(err))
-		end
+	local succeeded, err = pcall(handler, ticket, unpack(args))
+	if not succeeded then
+		res:writeHead(500, { ["Content-Type"] = "text/html" })
+		res:finish(("<html><body><h1>Internal Server Error</h1><p>%s</p></body></html>"):format(err))
 	end
 end
 
 function fly_app:dispatch(method, pattern, handler)
-	assert(type(pattern) == "string", "url pattern must be a string")
-	assert(pattern:sub(1, 1) == "/", "url pattern must begin with /")
+	assert(type(handler) == "function", "a handler must be a function")
+	assert(type(pattern) == "string", "an url pattern must be a string")
+	if pattern:sub(1, 1) ~= "/" then
+		pattern = "/" .. pattern
+	end
 	local _pattern = ("^%s$"):format(pattern)
 	self.routes[#self.routes + 1] = {
 		method = method, pattern = _pattern, handler = handler }
@@ -113,12 +111,19 @@ function fly_app:delete(...)
 	return self:dispatch("DELETE", ...)
 end
 
+function fly_app:root(handler)
+	return self:dispatch("GET", "/", handler)
+end
+
 function fly_app:error(status, handler)
 	assert(type(status) == "number", "only status numbers accepted")
 	self.error[status] = handler
 end
 
 function fly_app:use(compent)
+	if type(compent) == "string" then
+		compent = require(compent)
+	end
 	assert(type(compent) == "table", "only tables accepted")
 	if compent[1] == "view engine" then
 		assert(compent.compile and compent.render, "bad view engine")
@@ -128,29 +133,32 @@ function fly_app:use(compent)
 	end
 end
 
-function fly_app:fly(...)
-	return self.server:listen(...)
+function fly_app:fly(port, ...)
+	return self.server:listen(port or 8080, ...)
 end
 
 function fly_app_mt:__newindex(field, value)
-	if fly_app_set[field] then
-		return fly_app_set[field](self, value)
-	else
-		error("no such option - " .. field)
-	end
+	assert(not fly_app[field], "not an option")
+	self.options[field] = value
 end
 
 local fly = {}
 
 function fly.default_404(self)
-end
-
-function fly.default_500(self)
+	self:display("text/html", [[<html>
+<head><title>Not Found</title></head>
+<body>
+	<h1>404 Not Found</h1>
+	<p>This URI was not dispatched correctly.</p>
+</body></html>]])
 end
 
 function fly.new()
 	local app = {
-		routes = {}, engines = {}, views = {}, options = {},
+		routes = {}, engines = {}, views = {},
+		options = {
+			view_dir = "views"
+		},
 		error = setmetatable({
 			[404] = fly.default_404
 		}, { __call = fly_app.error })

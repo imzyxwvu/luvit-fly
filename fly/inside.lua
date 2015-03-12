@@ -68,7 +68,7 @@ function inside.compile(source)
 			elseif mark == "'" then
 				parsing, position = "str1", r + 1
 			elseif mark == "(" or mark == "{" then
-				-- TODO: Ignore parenthess inside comments
+				-- TODO: Ignore parenthess inside comments (:
 				assist_stack[#assist_stack + 1] = { mark, position }
 				position = r + 1
 			elseif mark == "}" then
